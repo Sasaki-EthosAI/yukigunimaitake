@@ -1,11 +1,11 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
 from sklearn.preprocessing import MinMaxScaler
 from lightgbm import LGBMRegressor
 
-def create_two_types_of_lags(df: pd.DataFrame, forecast_offset: int):
+def create_two_types_of_lags(df: pd.DataFrame, forecast_offset: int) -> pd.DataFrame:
     """
     ラグを2種類作成する:
       1) 「予測を行う日 (T)」基準のラグ:  lag_{l}_T
@@ -152,8 +152,8 @@ def full_feature_lgbm_forecast_evaluate(df: pd.DataFrame, customer_code, product
 
     # 9) MSE
     test_values_clip = test_values[:len(inv_forecast)]
-    mse = mean_squared_error(test_values_clip, inv_forecast)
-    print(f"★ MSE (offset={forecast_offset}): {mse:.3f}")
+    mape = mean_absolute_percentage_error(test_values_clip, inv_forecast)
+    print(f"★ MAPE (offset={forecast_offset}): {mape:.3f}")
 
     # 10) 可視化
     plt.figure(figsize=(12,6))
@@ -170,14 +170,14 @@ def full_feature_lgbm_forecast_evaluate(df: pd.DataFrame, customer_code, product
     plt.grid()
     plt.show()
 
-    return mse
+    return mape
 
 # --- 使用例 ---
 if __name__ == "__main__":
-    df = pd.read_csv("../Input/product_code=130049_customer_code=4721108.csv")
+    df = pd.read_csv("kawakura/Input/product_code=130049_customer_code=4721108.csv")
     # 3日後
-    mse_3 = full_feature_lgbm_forecast_evaluate(df, 4721108, 130049, forecast_offset=3)
+    mape_3 = full_feature_lgbm_forecast_evaluate(df, 4721108, 130049, forecast_offset=3)
     # 14日後
-    mse_14 = full_feature_lgbm_forecast_evaluate(df, 4721108, 130049, forecast_offset=14)
+    mape_14 = full_feature_lgbm_forecast_evaluate(df, 4721108, 130049, forecast_offset=14)
     # 30日後
-    mse_30 = full_feature_lgbm_forecast_evaluate(df, 4721108, 130049, forecast_offset=30)
+    mape_30 = full_feature_lgbm_forecast_evaluate(df, 4721108, 130049, forecast_offset=30)
