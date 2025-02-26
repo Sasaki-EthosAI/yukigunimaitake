@@ -1,11 +1,12 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import argparse
 from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
 from sklearn.preprocessing import MinMaxScaler
 from lightgbm import LGBMRegressor
 
-def create_two_types_of_lags(df: pd.DataFrame, forecast_offset: int) -> pd.DataFrame:
+def create_two_types_of_lags(df: pd.DataFrame, forecast_offset: int, target: str) -> pd.DataFrame:
     """
     ラグを2種類作成する:
       1) 「予測を行う日 (T)」基準のラグ:  lag_{l}_T
@@ -21,7 +22,7 @@ def create_two_types_of_lags(df: pd.DataFrame, forecast_offset: int) -> pd.DataF
 
     # 1) 予測を行う日 (T) 基準 => lag_{l}_T
     for l in candidate_lags:
-        df[f'lag_{l}_T'] = df['wholesale_price'].shift(l)
+        df[f'lag_{l}_T'] = df[target].shift(l)
 
     # 2) 予測先の日 (T+offset) 基準 => lag_{l}_pred
     #    => offset < l なら作成, offset >= l ならスキップ
@@ -29,11 +30,11 @@ def create_two_types_of_lags(df: pd.DataFrame, forecast_offset: int) -> pd.DataF
         if forecast_offset < l:
             # シフト量 = l - offset (正の値)
             shift_val = l - forecast_offset
-            df[f'lag_{l}_pred'] = df['wholesale_price'].shift(shift_val)
+            df[f'lag_{l}_pred'] = df[target].shift(shift_val)
 
     return df
 
-def create_full_features(df: pd.DataFrame, forecast_offset: int) -> pd.DataFrame:
+def create_full_features(df: pd.DataFrame, forecast_offset: int, target: str) -> pd.DataFrame:
     """
     - shipment_date を datetime 化 & ソート & インデックス化
     - 基本的なカレンダー・ローリング特徴量などを作成
@@ -59,14 +60,14 @@ def create_full_features(df: pd.DataFrame, forecast_offset: int) -> pd.DataFrame
     df['day_of_year'] = df.index.dayofyear
 
     # ローリング例
-    df['rolling_mean_7'] = df['wholesale_price'].rolling(7).mean()
-    df['rolling_std_7']  = df['wholesale_price'].rolling(7).std()
+    df['rolling_mean_7'] = df[target].rolling(7).mean()
+    df['rolling_std_7']  = df[target].rolling(7).std()
 
     # 差分例
-    df['diff_1'] = df['wholesale_price'].diff()
+    df['diff_1'] = df[target].diff()
 
     # 2種類のラグを追加
-    df = create_two_types_of_lags(df, forecast_offset)
+    df = create_two_types_of_lags(df, forecast_offset,target)
 
     # 欠損埋め
     df.fillna(method='bfill', inplace=True)
@@ -85,7 +86,7 @@ def create_sequences(array_2d: np.ndarray, lookback: int, forecast_offset: int):
     return np.array(X), np.array(y)
 
 def full_feature_lgbm_forecast_evaluate(df: pd.DataFrame, customer_code, product_code,
-                                        forecast_offset: int = 3) -> float:
+                                        forecast_offset: int, target: str) -> float:
     """
     LightGBM で時系列予測 (ローリング予測)。
     予測先日数 = forecast_offset。
@@ -96,6 +97,8 @@ def full_feature_lgbm_forecast_evaluate(df: pd.DataFrame, customer_code, product
     print(f"=== LightGBM Forecast ===")
     print(f"customer_code={customer_code}, product_code={product_code}")
     print(f"予測先日数 (forecast_offset) = {forecast_offset}")
+    print(f"目的変数 = {target}")
+
 
     # 1) フィルタ
     df_filtered = df[
@@ -107,10 +110,10 @@ def full_feature_lgbm_forecast_evaluate(df: pd.DataFrame, customer_code, product
         return np.nan
 
     # 2) 特徴量作成 (2種類のラグ含む)
-    df_features = create_full_features(df_filtered, forecast_offset)
+    df_features = create_full_features(df_filtered, forecast_offset,target)
 
     # ターゲットを先頭に
-    cols = ['wholesale_price'] + [c for c in df_features.columns if c != 'wholesale_price']
+    cols = [target] + [c for c in df_features.columns if c != target]
     df_features = df_features[cols]
 
     # 3) 学習 & テスト分割
@@ -136,7 +139,7 @@ def full_feature_lgbm_forecast_evaluate(df: pd.DataFrame, customer_code, product
     model.fit(X_train_2d, y_train)
 
     # 7) テストのローリング予測
-    test_values = test['wholesale_price'].values
+    test_values = test[target].values
     n_test = test_scaled.shape[0]
     history_array = np.concatenate([train_scaled[-(lookback+forecast_offset):], test_scaled], axis=0)
     forecast_values = []
@@ -173,7 +176,7 @@ def full_feature_lgbm_forecast_evaluate(df: pd.DataFrame, customer_code, product
     plt.plot(pred_index, inv_forecast, label=f"Predicted (+{forecast_offset} days)", linestyle='--', color='red')
     plt.title(f"LightGBM Forecast (offset={forecast_offset})\ncustomer_code={customer_code}, product_code={product_code}")
     plt.xlabel("Date")
-    plt.ylabel("wholesale_price")
+    plt.ylabel(target)
     plt.legend()
     plt.grid()
     plt.show()
@@ -182,11 +185,17 @@ def full_feature_lgbm_forecast_evaluate(df: pd.DataFrame, customer_code, product
 
 # --- 使用例 ---
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="LightGBM時系列予測")
+    parser.add_argument("--target", type=str, default="wholesale_price",
+                        help="目的変数 (例: target or 'shipment_quantity_bara')")
+    args = parser.parse_args()
+
     df = pd.read_csv("./product_code=130049_customer_code=4721108_daily_preprocessed.csv")
     print(df.head())
+
     # 3日後
-    mape_3 = full_feature_lgbm_forecast_evaluate(df, 4721108, 130049, forecast_offset=3)
+    mape_3 = full_feature_lgbm_forecast_evaluate(df, 4721108, 130049, forecast_offset=3, target=args.target)
     # 14日後
-    mape_14 = full_feature_lgbm_forecast_evaluate(df, 4721108, 130049, forecast_offset=14)
+    mape_14 = full_feature_lgbm_forecast_evaluate(df, 4721108, 130049, forecast_offset=14, target=args.target)
     # 30日後
-    mape_30 = full_feature_lgbm_forecast_evaluate(df, 4721108, 130049, forecast_offset=30)
+    mape_30 = full_feature_lgbm_forecast_evaluate(df, 4721108, 130049, forecast_offset=30, target=args.target)
